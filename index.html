@@ -395,14 +395,21 @@ const daysUntil = d => d ? daysBetween(today(),d) : null;
 const fmtDate = s => { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; };
 
 // ══ STATE ══
-// PID: read from URL param first, then fall back to localStorage (PWA reopen)
-const _pidFromUrl = parseInt(new URLSearchParams(location.search).get('p')||'0');
+// PID: read from hash (#p=12), query (?p=12), or localStorage
+// Hash is preferred for GitHub Pages as query params can cause 404
+function _readPidFromUrl(){
+  // Try hash first: #p=12 or #/p=12
+  const hash = location.hash.replace('#','');
+  const hashMatch = hash.match(/(?:^|[?&])p=(\d+)/);
+  if(hashMatch) return parseInt(hashMatch[1]);
+  // Fall back to query string
+  return parseInt(new URLSearchParams(location.search).get('p')||'0');
+}
+const _pidFromUrl = _readPidFromUrl();
 let PID = _pidFromUrl;
 if (PID) {
-  // Save to localStorage so PWA remembers it after closing
   localStorage.setItem('visor_pub_id', String(PID));
 } else {
-  // No param in URL — try localStorage (PWA installed, reopened without URL)
   const saved = parseInt(localStorage.getItem('visor_pub_id')||'0');
   if (saved) PID = saved;
 }
