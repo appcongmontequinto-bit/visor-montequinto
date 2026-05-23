@@ -1,8 +1,8 @@
 // SERVICE WORKER — Visor Montequinto
-// Repo: montequinto-bit.github.io/visor-montequinto
-const CACHE = 'visor-v1.0';
+// Solo cachea assets CDN, nunca interfiere con navegación
+const CACHE = 'visor-v1.1';
 
-self.addEventListener('install', e => { self.skipWaiting(); });
+self.addEventListener('install', e => self.skipWaiting());
 
 self.addEventListener('activate', e => {
   e.waitUntil(
@@ -14,15 +14,14 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET') return;
 
-  // Supabase — always network
-  if (url.hostname.includes('supabase.co')) {
-    e.respondWith(fetch(e.request).catch(() => new Response('', {status:503})));
-    return;
-  }
+  // NUNCA interceptar navegación — dejar que GitHub Pages sirva index.html
+  if (e.request.mode === 'navigate') return;
 
-  // CDN — cache first
+  // Supabase — siempre red
+  if (url.hostname.includes('supabase.co')) return;
+
+  // Solo cachear CDN
   const cdns = ['unpkg.com','cdn.jsdelivr.net','cdnjs.cloudflare.com',
                  'cartocdn.com','arcgisonline.com','openstreetmap.org'];
   if (cdns.some(d => url.hostname.includes(d))) {
@@ -34,16 +33,6 @@ self.addEventListener('fetch', e => {
         })
       )
     );
-    return;
   }
-
-  // Everything else — network first
-  e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
-        return res;
-      })
-      .catch(() => caches.match(e.request).then(c => c || new Response('', {status:503})))
-  );
+  // Todo lo demás — red normal sin interceptar
 });
