@@ -449,7 +449,26 @@ async function init() {
     territories = ters;
     document.title = `Territorios de ${pub.nombre.split(' ')[0]}`;
 
-    if (!territories.length) { show('expiredState'); return; }
+    if (!territories.length) {
+      // Show friendly "no territories" screen with request button
+      hide('loadingState');
+      const es=document.getElementById('expiredState');
+      if(es){
+        const fc=es.querySelector ? es : document;
+        // Add solicitar button if not already there
+        if(!document.getElementById('errorSolicitarBtn2')){
+          const btn=document.createElement('button');
+          btn.id='errorSolicitarBtn2';
+          btn.onclick=solicitarTerritorio;
+          btn.style.cssText='padding:12px 28px;border-radius:12px;border:none;background:#3b82f6;color:#fff;font-size:15px;font-weight:600;cursor:pointer;margin-top:16px;display:block;width:100%';
+          btn.textContent='📥 Solicitar un territorio';
+          es.appendChild(btn);
+        }
+      }
+      show('expiredState');
+      await checkPendingSolicitud();
+      return;
+    }
 
     // Load archivos for all territories
     const terIds = territories.map(t=>t.id).join(',');
@@ -460,6 +479,7 @@ async function init() {
 
     buildSwitcher();
     renderTerritory(0);
+  checkPendingSolicitud();
     show('app');
     setTimeout(() => initMap(), 120);
 
@@ -557,12 +577,25 @@ function renderTerritory(idx) {
   document.getElementById('stIcon').textContent=icon;
   document.getElementById('stMsg').textContent=msg;
 
+  // Solicitar territorio button - always visible
+  let solWrap=document.getElementById('solBtnWrap');
+  if(!solWrap){
+    solWrap=document.createElement('div');
+    solWrap.id='solBtnWrap';
+    solWrap.style.cssText='padding:0 16px 12px';
+    solWrap.innerHTML=`<button onclick="solicitarTerritorio()" id="solicitarBtnMain" style="width:100%;padding:10px;border-radius:12px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.1);color:#3b82f6;font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📥 Solicitar un territorio</button>`;
+    const pillsEl=document.getElementById('infoPills');
+    if(pillsEl&&pillsEl.parentNode) pillsEl.parentNode.insertBefore(solWrap,pillsEl.nextSibling);
+  }
+
   // Pills
   const pills=[];
   if(grp) pills.push(`🔵 <strong>Grupo ${grp.num}</strong>`);
   if(t.num_dirs) pills.push(`🏠 <strong>${t.num_dirs}</strong> puertas`);
   if(territories.length>1) pills.push(`📋 <strong>${idx+1}/${territories.length}</strong> territorios`);
   document.getElementById('infoPills').innerHTML=pills.map(p=>`<div class="pill-item">${p}</div>`).join('');
+
+  // Solicitar button always visible
 
   // Images
   renderImages(t._archs||[]);
@@ -853,6 +886,62 @@ if('serviceWorker' in navigator){
       .then(r => console.log('[PWA Visor] SW registrado:', r.scope))
       .catch(e => console.warn('[PWA Visor] SW error:', e));
   });
+}
+
+// ══ SOLICITAR TERRITORIO ══
+let _solicPending = false;
+
+async function solicitarTerritorio(){
+  if(_solicPending){ toast('Ya tienes una solicitud pendiente','am'); return; }
+
+  // Check if already has active territory
+  const nota = null; // no note needed
+
+  try{
+    const H={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
+    // Check if already has pending solicitud
+    const existing = await fetch(
+      `${SB_URL}/rest/v1/solicitudes?pub_id=eq.${PID}&estado=eq.pendiente&select=id`,
+      {headers:{...H,'Accept':'application/json'}}
+    ).then(r=>r.json());
+
+    if(existing.length > 0){
+      toast('Ya tienes una solicitud pendiente. El responsable la revisará pronto.','am',5000);
+      _solicPending = true;
+      return;
+    }
+
+    const body = {pub_id: PID, nota: nota?.trim()||null, estado:'pendiente'};
+    const r = await fetch(`${SB_URL}/rest/v1/solicitudes`, {
+      method:'POST',
+      headers:{...H,'Prefer':'return=minimal'},
+      body: JSON.stringify(body)
+    });
+
+    if(!r.ok) throw new Error('Error '+r.status);
+    _solicPending = true;
+    const btn = document.getElementById('solicitarBtnMain');
+    if(btn){ btn.textContent='⏳ Solicitud pendiente'; btn.disabled=true; btn.style.opacity='.6'; }
+    toast('✅ Solicitud enviada. El responsable te asignará un territorio pronto.','g',6000);
+  } catch(e){
+    toast('Error al enviar la solicitud: '+e.message,'r');
+  }
+}
+
+async function checkPendingSolicitud(){
+  if(!PID) return;
+  try{
+    const H={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
+    const data = await fetch(
+      `${SB_URL}/rest/v1/solicitudes?pub_id=eq.${PID}&estado=eq.pendiente&select=id`,
+      {headers:{...H,'Accept':'application/json'}}
+    ).then(r=>r.json());
+    _solicPending = data.length > 0;
+    if(_solicPending){
+      const btn = document.getElementById('solicitarBtnMain');
+      if(btn){ btn.textContent='⏳ Solicitud pendiente'; btn.disabled=true; btn.style.opacity='.6'; }
+    }
+  } catch(e){}
 }
 
 function visorCambiarPublicador(){
