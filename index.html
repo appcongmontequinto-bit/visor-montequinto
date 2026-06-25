@@ -530,6 +530,9 @@ function renderTerritory(idx) {
   const t = territories[idx];
   if (!t) return;
 
+  // Update campaign banner for this specific territory
+  if(_campania) updateCampaniaBanner();
+
   const grp = grupos.find(g=>g.id===t.grupo_id);
   const d = daysUntil(t.fecha_vence);
   const CIRC = 238;
@@ -951,13 +954,13 @@ async function checkPendingSolicitud(){
 // ══ CAMPAÑA ══
 let _campania = null;
 let _campaniaTeritorio = null;
+let _campaniaTeritorios = []; // all campaign records for this publisher's territories
 
 async function checkCampania(){
   if(!PID) return;
   const H={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Accept':'application/json'};
   try{
     const today = new Date().toISOString().split('T')[0];
-    // Get active campaign
     const cr = await fetch(
       `${SB_URL}/rest/v1/campanias?activa=eq.true&fecha_inicio=lte.${today}&fecha_fin=gte.${today}&select=*`,
       {headers:H}
@@ -966,7 +969,6 @@ async function checkCampania(){
     if(!cr||!cr.length){ hideCampaniaBanner(); return; }
     _campania = cr[0];
 
-    // Check if any of user's territories are in this campaign
     const terIds = territories.map(t=>t.id).join(',');
     if(!terIds){ hideCampaniaBanner(); return; }
 
@@ -976,11 +978,23 @@ async function checkCampania(){
     ).then(r=>r.json());
 
     if(!cts||!cts.length){ hideCampaniaBanner(); return; }
-    _campaniaTeritorio = cts[0];
+    _campaniaTeritorios = cts; // store ALL records
 
-    // Show campaign banner
-    showCampaniaBanner(_campania, _campaniaTeritorio);
+    // Show banner for current territory
+    updateCampaniaBanner();
   }catch(e){ console.warn('checkCampania error:',e); }
+}
+
+// Call this every time the displayed territory changes
+function updateCampaniaBanner(){
+  if(!_campania || !_campaniaTeritorios.length){ hideCampaniaBanner(); return; }
+  const currentTer = territories[currentIdx];
+  if(!currentTer){ hideCampaniaBanner(); return; }
+  // Find the campania_territorio record for THIS territory
+  const ct = _campaniaTeritorios.find(x=>x.territorio_id===currentTer.id);
+  if(!ct){ hideCampaniaBanner(); return; }
+  _campaniaTeritorio = ct;
+  showCampaniaBanner(_campania, ct);
 }
 
 function showCampaniaBanner(camp, ct){
