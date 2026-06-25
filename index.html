@@ -480,6 +480,7 @@ async function init() {
     buildSwitcher();
     renderTerritory(0);
   checkPendingSolicitud();
+  await checkCampania();
     show('app');
     setTimeout(() => initMap(), 120);
 
@@ -918,7 +919,10 @@ async function solicitarTerritorio(){
       body: JSON.stringify(body)
     });
 
-    if(!r.ok) throw new Error('Error '+r.status);
+    if(!r.ok){
+      const errBody = await r.text().catch(()=>'');
+      throw new Error('HTTP '+r.status+': '+errBody.slice(0,120));
+    }
     _solicPending = true;
     const btn = document.getElementById('solicitarBtnMain');
     if(btn){ btn.textContent='⏳ Solicitud pendiente'; btn.disabled=true; btn.style.opacity='.6'; }
@@ -942,6 +946,154 @@ async function checkPendingSolicitud(){
       if(btn){ btn.textContent='⏳ Solicitud pendiente'; btn.disabled=true; btn.style.opacity='.6'; }
     }
   } catch(e){}
+}
+
+// ══ CAMPAÑA ══
+let _campania = null;
+let _campaniaTeritorio = null;
+
+async function checkCampania(){
+  if(!PID) return;
+  const H={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Accept':'application/json'};
+  try{
+    const today = new Date().toISOString().split('T')[0];
+    // Get active campaign
+    const cr = await fetch(
+      `${SB_URL}/rest/v1/campanias?activa=eq.true&fecha_inicio=lte.${today}&fecha_fin=gte.${today}&select=*`,
+      {headers:H}
+    ).then(r=>r.json());
+
+    if(!cr||!cr.length){ hideCampaniaBanner(); return; }
+    _campania = cr[0];
+
+    // Check if any of user's territories are in this campaign
+    const terIds = territories.map(t=>t.id).join(',');
+    if(!terIds){ hideCampaniaBanner(); return; }
+
+    const cts = await fetch(
+      `${SB_URL}/rest/v1/campania_territorios?campania_id=eq.${_campania.id}&territorio_id=in.(${terIds})&select=*`,
+      {headers:H}
+    ).then(r=>r.json());
+
+    if(!cts||!cts.length){ hideCampaniaBanner(); return; }
+    _campaniaTeritorio = cts[0];
+
+    // Show campaign banner
+    showCampaniaBanner(_campania, _campaniaTeritorio);
+  }catch(e){ console.warn('checkCampania error:',e); }
+}
+
+function showCampaniaBanner(camp, ct){
+  let banner = document.getElementById('campaniaBanner');
+  if(!banner){
+    banner = document.createElement('div');
+    banner.id = 'campaniaBanner';
+    // Insert after sw-header
+    const header = document.querySelector('.sw-header');
+    if(header) header.parentNode.insertBefore(banner, header.nextSibling);
+    else document.body.prepend(banner);
+  }
+
+  const finDate = new Date(camp.fecha_fin+'T00:00:00');
+  const today = new Date();
+  const daysLeft = Math.ceil((finDate-today)/(1000*60*60*24));
+  const hasPorc = ct.porcentaje != null;
+
+  // Change header dot and theme color to amber for campaign mode
+  const dot = document.querySelector('.sw-dot');
+  if(dot) dot.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content','#d97706');
+
+  banner.style.cssText = `
+    background:linear-gradient(135deg,#f59e0b,#d97706);
+    color:#fff;padding:12px 16px;font-size:13px;line-height:1.5;
+    border-bottom:2px solid rgba(255,255,255,.3);
+    position:sticky;top:0;z-index:100;
+  `;
+  banner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">🚩</span>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:14px">${camp.nombre}</div>
+        <div style="opacity:.9;font-size:12px">Territorio en campaña · ${daysLeft>0?'Finaliza en '+daysLeft+' días':'Finalizó hoy'}</div>
+        <div style="opacity:.85;font-size:12px;margin-top:2px">
+          ${hasPorc
+            ? `✅ Porcentaje indicado: <b>${ct.porcentaje}%</b> trabajado`
+            : '⚠️ Al terminar de trabajar el territorio, indica el porcentaje completado'}
+        </div>
+      </div>
+      ${!hasPorc
+        ? `<button onclick="abrirModalPorcentaje()" style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:10px;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;font-family:var(--font)">Indicar %</button>`
+        : `<button onclick="abrirModalPorcentaje()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:10px;color:#fff;padding:8px 14px;font-size:12px;cursor:pointer;white-space:nowrap;font-family:var(--font)">Cambiar</button>`
+      }
+    </div>
+  `;
+}
+
+function hideCampaniaBanner(){
+  document.getElementById('campaniaBanner')?.remove();
+  // Restore normal colors
+  const dot = document.querySelector('.sw-dot');
+  if(dot) dot.style.background = '';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content','#3b82f6');
+}
+
+function abrirModalPorcentaje(){
+  const existing = document.getElementById('porcModal');
+  if(existing) existing.remove();
+
+  const current = _campaniaTeritorio?.porcentaje;
+  const ov = document.createElement('div');
+  ov.id = 'porcModal';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(8px)';
+  ov.innerHTML = `
+    <div style="background:var(--s1);border-radius:20px 20px 0 0;padding:24px 20px 40px;width:100%;max-width:480px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:17px;font-weight:700">🚩 ${_campania?.nombre}</div>
+        <button onclick="document.getElementById('porcModal').remove()" style="background:var(--s3);border:none;border-radius:8px;padding:6px 10px;color:var(--t2);cursor:pointer;font-size:16px">✕</button>
+      </div>
+      <div style="font-size:14px;color:var(--t2);margin-bottom:16px;line-height:1.6">
+        Indica el porcentaje del territorio que has podido trabajar durante esta campaña.<br>
+        <span style="color:var(--t3);font-size:12px">Esto ayuda al responsable a planificar futuras asignaciones.</span>
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:13px;color:var(--t2)">Porcentaje trabajado</span>
+          <span id="porcValLabel" style="font-size:16px;font-weight:700;color:var(--blue)">${current??50}%</span>
+        </div>
+        <input type="range" id="porcSlider" min="0" max="100" step="5" value="${current??50}"
+          style="width:100%;accent-color:var(--blue);height:6px"
+          oninput="document.getElementById('porcValLabel').textContent=this.value+'%'">
+        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--t3)">
+          <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+        </div>
+      </div>
+      <button onclick="guardarPorcentaje()" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--blue);color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:var(--font)">
+        Guardar porcentaje
+      </button>
+    </div>`;
+  ov.addEventListener('click', e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+async function guardarPorcentaje(){
+  const pct = parseInt(document.getElementById('porcSlider')?.value||'0');
+  if(!_campaniaTeritorio){ alert('Error: no se encontró el registro de campaña'); return; }
+  const H={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'};
+  try{
+    const r = await fetch(
+      `${SB_URL}/rest/v1/campania_territorios?id=eq.${_campaniaTeritorio.id}`,
+      {method:'PATCH',headers:H,body:JSON.stringify({porcentaje:pct})}
+    );
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    _campaniaTeritorio.porcentaje = pct;
+    document.getElementById('porcModal')?.remove();
+    showCampaniaBanner(_campania, _campaniaTeritorio);
+  }catch(e){
+    alert('Error al guardar: '+e.message);
+  }
 }
 
 function visorCambiarPublicador(){
